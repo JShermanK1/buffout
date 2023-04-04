@@ -5,33 +5,29 @@ use std::process::{self, Stdio};
 use std::io::{BufReader, 
               BufWriter,
               Write,
-              BufRead};
+              BufRead,
+              self};
 use std::error::Error;
 use std::boxed::Box;
-use clap::{Arg, Command};
+use clap::{arg, Command, value_parser};
 use gzp::{par::compress::{ParCompress, ParCompressBuilder},
          deflate::Gzip, ZWriter, Compression};
 
-fn cli() -> Command<'static> {
+fn cli() -> Command {
     Command::new("buffout")
             .args(&[
-                Arg::new("cmd")
-                    .long("cmd")
-                    .short('c')
-                    .required(true)
-                    .takes_value(true)
-                    .value_name("STRING"),
-                Arg::new("out")
-                    .long("out")
-                    .short('o')
-                    .required(true)
-                    .takes_value(true)
-                    .value_name("FILE"),
-                Arg::new("gzip")
-                    .long("gzip")
-                    .short('z')
-                    .takes_value(true)
-                    .default_missing_value("6")
+                arg!(
+                    -c --cmd <STRING> "Command to start as sub process and then buffer the stdout"
+                ).required(false),
+                arg!(
+                    -o --out <FILE> "Path to file for buffered output"
+                ).required(true),
+                arg!(
+                    -z --gzip <COMPRESSION_LEVEL> "Compression level to pass to gzip"
+                ).value_parser(value_parser!(u32))
+                 .default_missing_value("6")
+                 .require_equals(true)
+                 .num_args(0..=1),
             ])
 }
 
@@ -39,31 +35,42 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let matches = cli().get_matches();
 
-    let cmd = matches.value_of("cmd")
-                    .expect("error parsing cmd")
-                    .split_whitespace()
-                    .collect::<Vec<&str>>();
 
-    let out_f = matches.value_of("out")
+
+    let out_f = matches.get_one::<String>("out")
                     .expect("error parsing out");
     
     let out_f = File::create(PathBuf::from(out_f)).expect("Error parsing out file path");
-    let mut child_p = process::Command::new(cmd[0])
-                            .args(cmd[1..].into_iter())
-                            .stdout(Stdio::piped())
-                            .spawn().expect("failed to execute command");
-    let reader = BufReader::new(child_p.stdout
-                                .take()
-                                .expect("failed to capture process stdout"));
-    
+    let reader: Box<dyn BufRead>;
+    let mut child_p = None;
+    if let Some(args) = matches.get_one::<String>("cmd") {
+
+        let mut args = args.split_whitespace();
+
+        let cmd =  args.next().expect("Command flag used but no command present");                
+        let mut sp = process::Command::new(cmd)
+                        .args(args)
+                        .stdout(Stdio::piped())
+                        .spawn().expect("failed to execute command");
+        
+
+        reader = Box::new(BufReader::new(
+                                sp.stdout.take()
+                                         .expect("failed to capture process stdout")
+                                )
+                            );
+
+        child_p = Some(sp);
+    } else {
+        reader = Box::new(io::stdin().lock());
+    }
+
     let mut writer = BufWriter::with_capacity(1024 * 1024 * 100, out_f);
-    if matches.is_present("gzip") {
-        let level = matches.value_of("gzip")
-                           .map(|v| v.parse::<u32>().unwrap())
-                           .expect("error in gzip value");
+    if let Some(level) = matches.get_one::<u32>("gzip") {
+
         let mut e_writer: ParCompress<Gzip> = ParCompressBuilder::new()
                                                     .num_threads(4).unwrap()
-                                                    .compression_level(Compression::new(level))
+                                                    .compression_level(Compression::new(*level))
                                                     .from_writer(writer); 
 
         reader.split(b'\n').for_each(|l| {
@@ -80,10 +87,15 @@ fn main() -> Result<(), Box<dyn Error>> {
         });
         writer.flush().unwrap();
     }
-    let exit_stat = child_p.wait()
-                             .expect("error waiting on process");
+    
+    if let Some(mut process) = child_p {
+        let exit_stat = process.wait()
+                               .expect("error waiting on process"); 
+        assert!(exit_stat.success());
+    }
+                             
 
-    assert!(exit_stat.success());
+    
 
     Ok(())
 }
