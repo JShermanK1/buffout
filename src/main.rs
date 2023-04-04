@@ -66,10 +66,18 @@ fn main() -> Result<(), Box<dyn Error>> {
                                                     .compression_level(Compression::new(level))
                                                     .from_writer(writer); 
 
-        reader.lines().for_each(|l| e_writer.write_all((l.unwrap() + "\n").as_bytes()).unwrap());
+        reader.split(b'\n').for_each(|l| {
+            let mut l = l.unwrap();
+            l.push(b'\n'); 
+            e_writer.write_all(&l).unwrap();
+        });
         e_writer.finish().unwrap();
     } else {
-        reader.lines().for_each(|l| writer.write_all((l.unwrap() + "\n").as_bytes()).unwrap());
+        reader.split(b'\n').for_each(|l| {
+            let mut l = l.unwrap();
+            l.push(b'\n'); 
+            writer.write_all(&l).unwrap();
+        });
         writer.flush().unwrap();
     }
     let exit_stat = bed_child.wait()
