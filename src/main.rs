@@ -47,16 +47,16 @@ fn main() -> Result<(), Box<dyn Error>> {
     let out_f = matches.value_of("out")
                     .expect("error parsing out");
     
-    let bed_f = File::create(PathBuf::from(out_f)).expect("Error parsing out file path");
-    let mut bed_child = process::Command::new(cmd[0])
+    let out_f = File::create(PathBuf::from(out_f)).expect("Error parsing out file path");
+    let mut child_p = process::Command::new(cmd[0])
                             .args(cmd[1..].into_iter())
                             .stdout(Stdio::piped())
                             .spawn().expect("failed to execute command");
-    let reader = BufReader::new(bed_child.stdout
+    let reader = BufReader::new(child_p.stdout
                                 .take()
                                 .expect("failed to capture process stdout"));
     
-    let mut writer = BufWriter::with_capacity(1024 * 1024 * 100, bed_f);
+    let mut writer = BufWriter::with_capacity(1024 * 1024 * 100, out_f);
     if matches.is_present("gzip") {
         let level = matches.value_of("gzip")
                            .map(|v| v.parse::<u32>().unwrap())
@@ -80,7 +80,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         });
         writer.flush().unwrap();
     }
-    let exit_stat = bed_child.wait()
+    let exit_stat = child_p.wait()
                              .expect("error waiting on process");
 
     assert!(exit_stat.success());
